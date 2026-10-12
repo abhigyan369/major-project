@@ -1,0 +1,477 @@
+// ==========================================
+// NIE RESEARCH PUBLICATION MANAGEMENT SCHEMA
+// Database: PostgreSQL
+// Framework: Prisma ORM with Next.js & Auth.js
+// ==========================================
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ------------------------------------------
+// ENUM DEFINITIONS
+// ------------------------------------------
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum FacultyDesignation {
+  PROFESSOR
+  ASSOCIATE_PROFESSOR
+  ASSISTANT_PROFESSOR
+  CONTRACT_FACULTY
+  RESEARCH_SCHOLAR
+  OTHER
+}
+
+enum PublicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  REVISION_REQUIRED
+  APPROVED
+  PUBLISHED
+  REJECTED
+  ARCHIVED
+}
+
+enum PublicationType {
+  JOURNAL_ARTICLE
+  CONFERENCE_PAPER
+  BOOK_CHAPTER
+  REVIEW_ARTICLE
+  PATENT
+  OTHER
+}
+
+enum ScopusQuartile {
+  Q1
+  Q2
+  Q3
+  Q4
+  UNSPECIFIED
+  NOT_SCOPUS
+}
+
+enum StudentInvolvement {
+  NONE
+  UG_ONLY
+  PG_ONLY
+  PHD_ONLY
+  MIXED
+}
+
+enum AuthorType {
+  FACULTY
+  STUDENT
+  EXTERNAL
+}
+
+enum ApprovalAction {
+  APPROVED
+  REJECTED
+  REQUEST_CHANGES
+  ARCHIVED
+  STATUS_CHANGE
+}
+
+enum DocumentType {
+  MANUSCRIPT
+  ACCEPTANCE_LETTER
+  PUBLISHED_PAPER
+  CERTIFICATE
+  PUBLISHED_PDF
+  REVISION_RESPONSE
+  RAW_DATA
+  OTHER
+}
+
+enum NotificationType {
+  PUBLICATION_SUBMITTED
+  PUBLICATION_APPROVED
+  PUBLICATION_REJECTED
+  CHANGES_REQUESTED
+  SYSTEM_NOTICE
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  USER_CREATE
+  USER_UPDATE
+  PUBLICATION_CREATE
+  PUBLICATION_UPDATE
+  PUBLICATION_DELETE
+  PUBLICATION_SUBMIT
+  PUBLICATION_APPROVE
+  PUBLICATION_REJECT
+  PUBLICATION_REQUEST_CHANGES
+  PUBLICATION_STATUS_CHANGE
+  PUBLICATION_ARCHIVE
+  PUBLICATION_RESTORE
+  DOCUMENT_UPLOAD
+  DOCUMENT_DELETE
+  DEPARTMENT_CREATE
+  DEPARTMENT_UPDATE
+  DEPARTMENT_DELETE
+  EXCEL_IMPORT
+}
+
+// ------------------------------------------
+// CORE INFRASTRUCTURE & DOMAIN MODELS
+// ------------------------------------------
+
+model Campus {
+  id          String       @id @default(cuid())
+  code        String       @unique // SOUTH, NORTH
+  name        String       @unique // South Campus, North Campus
+  location    String?
+
+  departments Department[]
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Department {
+  id               String        @id @default(cuid())
+  code             String        @unique // CSE, ISE, ECE, MECH, CIVIL, EEE, MCA, MATHS, PHY, CHEM
+  name             String        @unique // e.g. Department of Computer Science & Engineering
+  isActive         Boolean       @default(true)
+  
+  campusId         String
+  campus           Campus        @relation(fields: [campusId], references: [id])
+
+  facultyCount     Int           @default(0)
+  targetPerFaculty Float         @default(3.0)
+
+  users            User[]
+  publications     Publication[]
+
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([campusId])
+}
+
+model User {
+  id                      String              @id @default(cuid())
+  name                    String?
+  email                   String              @unique
+  passwordHash            String?
+  emailVerified           DateTime?
+  image                   String?
+  role                    UserRole            @default(USER)
+  designation             FacultyDesignation?
+  status                  UserStatus          @default(ACTIVE)
+  
+  departmentId            String?
+  department              Department?         @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  authorships             PublicationAuthor[]
+  approvalsGiven          Approval[]
+  documentsUploaded       PublicationDocument[]
+  publicationsCreated     Publication[]       @relation("PublicationCreator")
+  correspondingPubs       Publication[]       @relation("CorrespondingAuthor")
+  notifications           Notification[]
+  auditLogs               AuditLog[]
+  importBatches           ImportBatch[]
+
+  accounts                Account[]
+  sessions                Session[]
+
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  @@index([departmentId])
+  @@index([role])
+  @@index([email])
+}
+
+// ------------------------------------------
+// AUTH.JS ADAPTER MODELS
+// ------------------------------------------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ------------------------------------------
+// PUBLICATION DOMAIN MODELS
+// ------------------------------------------
+
+model ResearchArea {
+  id          String        @id @default(cuid())
+  name        String        @unique
+  description String?
+
+  publications Publication[]
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model Journal {
+  id             String         @id @default(cuid())
+  name           String         @unique
+  publisher      String?
+  issn           String?
+  eissn          String?
+  impactFactor   Decimal?       @db.Decimal(5, 3)
+  scopusQuartile ScopusQuartile @default(UNSPECIFIED)
+  isScopus       Boolean        @default(true)
+  isWebOfScience Boolean        @default(false)
+
+  publications   Publication[]
+
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([scopusQuartile])
+}
+
+model Publication {
+  id                      String              @id @default(cuid())
+  title                   String              @db.Text
+  publicationType         PublicationType     @default(JOURNAL_ARTICLE)
+
+  journalId               String?
+  journal                 Journal?            @relation(fields: [journalId], references: [id], onDelete: SetNull)
+  venueName               String?
+  publisher               String?
+  issn                    String?
+  volume                  String?
+  issue                   String?
+  pages                   String?
+  doi                     String?             @unique
+  publicationUrl          String?
+
+  researchAreaId          String?
+  researchArea            ResearchArea?       @relation(fields: [researchAreaId], references: [id], onDelete: SetNull)
+
+  departmentId            String
+  department              Department          @relation(fields: [departmentId], references: [id])
+
+  correspondingAuthorId   String?
+  correspondingAuthor     User?               @relation("CorrespondingAuthor", fields: [correspondingAuthorId], references: [id], onDelete: SetNull)
+  correspondingAuthorName String?
+
+  // Pipeline Dates
+  startDate               DateTime?
+  submissionDate          DateTime?
+  acceptanceDate          DateTime?
+  publicationDate         DateTime?
+
+  // Pipeline Status & Quality Metrics
+  status                  PublicationStatus   @default(DRAFT)
+  isScopus                Boolean             @default(false)
+  isWebOfScience          Boolean             @default(false)
+  quartile                ScopusQuartile      @default(UNSPECIFIED)
+  impactFactor            Decimal?            @db.Decimal(5, 3)
+  citationCount           Int                 @default(0)
+  citationLastUpdated     DateTime?
+
+  // Financials, Funding & Collaborations
+  fundingAgency           String?
+  grantTitle              String?
+  grantAmountLakhs        Decimal?            @db.Decimal(10, 2)
+  studentInvolvement      StudentInvolvement  @default(NONE)
+  isPhdThesisRelated      Boolean             @default(false)
+  hasCollaboration        Boolean             @default(false)
+  externalCollaborators   String?             @db.Text
+  internalNotes           String?             @db.Text
+
+  // User Ownership
+  createdById             String
+  createdBy               User                @relation("PublicationCreator", fields: [createdById], references: [id])
+
+  // Relational Collections
+  authors                 PublicationAuthor[]
+  approvals               Approval[]
+  documents               PublicationDocument[]
+  notifications           Notification[]
+
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  @@index([departmentId])
+  @@index([status])
+  @@index([publicationType])
+  @@index([createdById])
+  @@index([quartile])
+  @@index([isWebOfScience])
+}
+
+model PublicationAuthor {
+  id              String      @id @default(cuid())
+  publicationId   String
+  publication     Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  userId          String?
+  user            User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  authorName      String
+  authorEmail     String?
+  affiliation     String?     @default("The National Institute of Engineering, Mysuru")
+  authorOrder     Int         @default(1)
+  
+  isInternal      Boolean     @default(true)
+  isCorresponding Boolean     @default(false)
+  isStudent       Boolean     @default(false)
+  authorType      AuthorType  @default(FACULTY)
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([publicationId, authorOrder])
+  @@index([userId])
+}
+
+model Approval {
+  id            String         @id @default(cuid())
+  publicationId String
+  publication   Publication    @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  adminId       String
+  admin         User           @relation(fields: [adminId], references: [id])
+
+  action        ApprovalAction
+  comment       String?        @db.Text
+
+  createdAt     DateTime       @default(now())
+
+  @@index([publicationId])
+  @@index([adminId])
+}
+
+model PublicationDocument {
+  id            String       @id @default(cuid())
+  publicationId String
+  publication   Publication  @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  fileName      String
+  fileType      String
+  filePath      String
+  fileSize      Int          @default(0)
+  documentType  DocumentType @default(MANUSCRIPT)
+
+  uploadedById  String
+  uploadedBy    User         @relation(fields: [uploadedById], references: [id])
+
+  createdAt     DateTime     @default(now())
+
+  @@index([publicationId])
+  @@index([uploadedById])
+}
+
+model Notification {
+  id            String           @id @default(cuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  publicationId String?
+  publication   Publication?     @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+
+  type          NotificationType
+  title         String
+  message       String           @db.Text
+  isRead        Boolean          @default(false)
+
+  createdAt     DateTime         @default(now())
+
+  @@index([userId, isRead])
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  userId     String?
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action     AuditAction
+  entityType String
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+
+  createdAt  DateTime    @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ------------------------------------------
+// EXCEL IMPORT MANAGEMENT
+// ------------------------------------------
+
+enum ImportStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model ImportBatch {
+  id            String       @id @default(cuid())
+  fileName      String
+  status        ImportStatus @default(COMPLETED)
+  totalRows     Int
+  importedCount Int          @default(0)
+  rejectedCount Int          @default(0)
+  updatedCount  Int          @default(0)
+  warningsCount Int          @default(0)
+  errorsCount   Int          @default(0)
+  summary       Json?
+
+  importedById  String
+  importedBy    User         @relation(fields: [importedById], references: [id])
+
+  createdAt     DateTime     @default(now())
+
+  @@index([importedById])
+  @@index([createdAt])
+}
+
